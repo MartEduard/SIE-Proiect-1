@@ -3,41 +3,44 @@ import utime
 import array
 import gc
 
+# --- HARDWARE SETUP & CONSTANTS ---
 adc = ADC(26)
 
-TOTAL_SAMPLES = 25000
-WINDOW_SIZE = 600
-PEAK_OFFSET = 150
+TOTAL_SAMPLES = 25000 # 25kHz for 1-second recording
+WINDOW_SIZE = 2400    # Size of the extracted window
+PEAK_OFFSET = 600     # Start 600 points before the peak
 
-# Pre-alocare globala pentru a evita fragmentarea memoriei
+# Global pre-allocation to avoid memory fragmentation
 audio_buffer = array.array("h", [0] * TOTAL_SAMPLES)
 
 def get_baseline_offset():
-    print("Calibrare zgomot fond... (pastreaza linistea 1 sec)")
-    suma = 0
+    """Calculates the quiet room background noise."""
+    print("Calibrating background noise... (keep quiet for 1 sec)")
+    sum_val = 0
     for _ in range(500):
-        suma += (adc.read_u16() >> 4)
+        sum_val += (adc.read_u16() >> 4)
         utime.sleep_us(200)
-    offset = suma // 500
-    print("Offset calibrat la:", offset)
+    offset = sum_val // 500
+    print("Offset calibrated at:", offset)
     return offset
 
 def capture_and_process_test(offset):
+    """Captures the audio, applies pre-emphasis, and extracts the scaled window."""
     global audio_buffer 
     
-    print("\nPregateste-te (ignor sunetul tastei Enter)...")
+    print("\nGet ready (ignoring the Enter key sound)...")
     utime.sleep(1)
     
-    print("ACUM! Rosteste o vocala scurta...")
+    print("Speak a short vowel...")
     
     for i in range(TOTAL_SAMPLES):
         audio_buffer[i] = (adc.read_u16() >> 4) - offset 
         
-    # Filtrul de Pre-accentuare (protejeaza frecventele inalte pentru I si E)
+    # Pre-emphasis filter (protects high frequencies for I and E)
     for i in range(TOTAL_SAMPLES - 1, 0, -1):
         audio_buffer[i] = audio_buffer[i] - int(0.9 * audio_buffer[i-1])
         
-    print("Inregistrare captata. Caut potrivirea...")
+    print("Recording captured. Finding the match...")
     
     max_val = 0
     peak_idx = PEAK_OFFSET
@@ -67,26 +70,10 @@ def capture_and_process_test(offset):
     while len(test_scaled) < WINDOW_SIZE:
         test_scaled.append(0)
         
-    print("\n--- INCEPUT DATE PLOTTER ---")
-    
-    # Filtru de netezire (Moving Average pe 9 puncte) 
-    # Rotunjeste varfurile ascutite pentru a parea o sinusoida
-    for i in range(len(test_scaled)):
-        start_idx = max(0, i - 4)
-        end_idx = min(len(test_scaled), i + 5)
-        
-        suma_locala = 0
-        for j in range(start_idx, end_idx):
-            suma_locala += test_scaled[j]
-            
-        valoare_smooth = suma_locala // (end_idx - start_idx)
-        print(valoare_smooth)
-        
-    print("--- SFARSIT DATE PLOTTER ---\n")
-        
     return test_scaled
 
 def load_template(filename):
+    """Loads the saved vowel template from memory."""
     samples = []
     try:
         with open(filename, "r") as f:
@@ -97,6 +84,7 @@ def load_template(filename):
         return None
 
 def dtw_distance(s1, s2):
+    """Calculates the Dynamic Time Warping distance between two signals."""
     s1_small = [s1[i] for i in range(0, len(s1), 3)]
     s2_small = [s2[i] for i in range(0, len(s2), 3)]
     
@@ -117,29 +105,29 @@ def dtw_distance(s1, s2):
     
     return prev_row[l2]
 
-# --- PROGRAMUL PRINCIPAL ---
-vocale = ["A", "E", "I", "O", "U"]
+# --- MAIN EXECUTION ---
+vowels = ["A", "E", "I", "O", "U"]
 
-liniste_offset = get_baseline_offset()
+silence_offset = get_baseline_offset()
 
 while True:
-    input("Apasa ENTER pentru a rosti o vocala (sau CTRL+C pentru iesire)...")
+    input("Press ENTER to speak a vowel (or CTRL+C to exit)...")
     
-    test_data = capture_and_process_test(liniste_offset)
+    test_data = capture_and_process_test(silence_offset)
     
     best_match = ""
     min_dist = float('inf') 
     
-    for v in vocale:
-        nume_fisier = f"/{v}_vocala.txt"
-        template = load_template(nume_fisier)
+    for v in vowels:
+        filename = f"/{v}_vowel.txt"
+        template = load_template(filename)
         
         if template is None:
-            print(f"Lipseste sablonul pentru {v}! Antreneaza-l mai intai.")
+            print(f"Missing template for {v}! Train it first.")
             continue
             
         dist = dtw_distance(test_data, template)
-        print(f"Distanta fata de '{v}' : {dist}")
+        print(f"Distance to '{v}' : {dist}")
         
         del template
         gc.collect() 
@@ -150,10 +138,9 @@ while True:
                 
     if best_match:
         print("=" * 40)
-        print(f"REZULTAT: Am recunoscut vocala >>> {best_match} <<<")
+        print(f"RESULT: Recognized vowel >>> {best_match} <<<")
         print("=" * 40)
         print("\n")
         
     del test_data
     gc.collect()
-
